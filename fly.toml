@@ -4,14 +4,17 @@ primary_region = "ams"
 [build]
   dockerfile = "Dockerfile"
 
+# SERVEI 1: Les trucades (UDP pur, sense xecs)
 [[services]]
   internal_port = 5060
   protocol = "udp"
-
   [[services.ports]]
     port = 5060
 
-  [services.concurrency]
-    type = "connections"
-    hard_limit = 25
-    soft_limit = 20
+# SERVEI 2: UptimeRobot (TCP/HTTP per mantenir-ho despert)
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  [[services.ports]]
+    port = 8080
+    handlers = ["http"]
