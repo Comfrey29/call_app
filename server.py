@@ -1,8 +1,14 @@
 import asyncio
 
-# Diccionari global per guardar els usuaris que es connecten
-# Estructura: {"nom_usuari": (ip, port)}
 usuaris_connectats = {}
+
+# --- MINI-SERVIDOR HTTP (Per UptimeRobot) ---
+async def handle_uptime_robot(reader, writer):
+    # Responem amb un OK HTTP estàndard perquè UptimeRobot no doni error
+    resposta = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK"
+    writer.write(resposta.encode('utf-8'))
+    await writer.drain()
+    writer.close()
 
 class CentraletaUDPAsync(asyncio.DatagramProtocol):
     def __init__(self):
@@ -11,42 +17,37 @@ class CentraletaUDPAsync(asyncio.DatagramProtocol):
 
     def connection_made(self, transport):
         self.transport = transport
-        print("🚀 Centraleta de Telefonia activada i escoltant al port 5060/UDP...")
 
     def datagram_received(self, data, addr):
         try:
             missatge = data.decode('utf-8').strip()
-            print(f"📩 Paquet rebut des de {addr}: {missatge}")
+            print(f"📩 [{addr}] {missatge}")
             
-            # 1. BATEC DE COR (Heartbeat) -> Format: "H:Joan"
+            # 1. BATEC DE COR
             if missatge.startswith("H:"):
                 nom = missatge.split(":")[1]
                 usuaris_connectats[nom] = addr
                 
-            # 2. INTENT DE TRUCADA -> Format: "CALL:Arnau"
+            # 2. TRUCADA
             elif missatge.startswith("CALL:"):
                 nom_desti = missatge.split(":")[1]
                 nom_origen = self.buscar_nom_per_adreca(addr)
                 
                 if nom_origen and nom_desti in usuaris_connectats:
-                    print(f"📞 {nom_origen} està trucant a {nom_desti}...")
                     paquet = f"TRUCADA_DE:{nom_origen}".encode('utf-8')
                     self.transport.sendto(paquet, usuaris_connectats[nom_desti])
                 else:
-                    # Si el destí no està connectat, avisem a qui truca
                     self.transport.sendto(b"FINALITZADA", addr)
 
-            # 3. TRUCADA ACCEPTADA -> Format: "ACCEPTADA_DE:Arnau"
+            # 3. ACCEPTADA
             elif missatge.startswith("ACCEPTADA_DE:"):
                 nom_origen = missatge.split(":")[1]
-                print(f"✅ {nom_origen} ha agafat la trucada.")
                 for usuari, adreca in usuaris_connectats.items():
                     if usuari != nom_origen:
                         self.transport.sendto(b"ACCEPTADA", adreca)
 
-            # 4. CANCEL·LAR, REBUTJAR O PENJAR
+            # 4. PENJADA O CANCEL·LADA
             elif missatge.startswith("CANCEL:") or missatge.startswith("HANGUP:") or missatge.startswith("REBUTJADA_DE:"):
-                print("🛑 S'ha penjat o rebutjat la trucada. Reiniciant línies.")
                 for adreca in usuaris_connectats.values():
                     self.transport.sendto(b"FINALITZADA", adreca)
 
@@ -61,17 +62,24 @@ class CentraletaUDPAsync(asyncio.DatagramProtocol):
 
 async def main():
     loop = asyncio.get_running_loop()
-    # Obrim el sòcol UDP a la xarxa local del contenidor
+    
+    # 1. Obrim el sòcol UDP (Per a les trucades mòbils)
     transport, protocol = await loop.create_datagram_endpoint(
         lambda: CentraletaUDPAsync(),
         local_addr=('0.0.0.0', 5060)
     )
     
+    # 2. Obrim el sòcol TCP (Perquè UptimeRobot ens faci ping)
+    server_web = await asyncio.start_server(handle_uptime_robot, '0.0.0.0', 8080)
+    
+    print("🚀 Servidor ACTIU! UDP: 5060 (Trucades) | TCP: 8080 (UptimeRobot HTTP)")
+    
     try:
-        # Manté el servidor despert 24sp/7
+        # Mantenim el codi encès indefinidament
         await asyncio.sleep(3600 * 24 * 365)
     finally:
         transport.close()
+        server_web.close()
 
 if __name__ == '__main__':
     asyncio.run(main())
